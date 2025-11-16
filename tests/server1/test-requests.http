@@ -1,0 +1,19 @@
+
+
+POST http://localhost:8000/vehicle/1/command HTTP/1.1
+content-type: application/json
+accept: application/json
+
+{
+    "action": "forward",
+    "speed": 0.5
+}
+
+###
+
+# GET http://localhost:8000/vehicle/1/command?action=forward&speed=0.5
+
+
+###
+
+# GET http://localhost:8000/
