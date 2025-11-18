@@ -17,6 +17,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Application Modes
+    |--------------------------------------------------------------------------
+    |
+    | These values determine the role of this application instance. An instance
+    | can be a vehicle, a server, or both, allowing for flexible deployments.
+    |
+    */
+
+    'vehicle_mode_enabled' => env('VEHICLE_MODE_ENABLED', false),
+    'server_mode_enabled' => env('SERVER_MODE_ENABLED', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------
     |
