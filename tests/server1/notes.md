@@ -62,4 +62,21 @@ sudo systemctl enable --now pigpiod   # starts the pigpio daemon
 
 
 
+TODOs:
+- vehicle dashboard
+- battery monitoring
+- AI stuff
+    - personality
+    - gossip protocol??
+- cameras
+- sounds, other than horn
+- SLAM, autonomous
+
+
+
+FPV camera + streaming
+Cheap option: OV2640/ESP32-CAM module as a separate MQTT video broker (mjpeg2sd or esp32-cam-webserver)
+Luxury option: ESP32-S3 with PSI-RAM + CameraWebServer example, stream directly to the same web dashboard (WebSocket MJPEG)
+
+
 
