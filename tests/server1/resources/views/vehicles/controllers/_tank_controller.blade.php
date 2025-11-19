@@ -49,5 +49,24 @@
                 </div>
             </td>
         </tr>
+        <tr>
+            <td style="vertical-align: top; padding-top: 10px;">
+                <div style="border: 1px solid #ccc; background-color: #fff; padding: 10px; border-radius: 5px;">
+                    <h4>AI Camera</h4>
+                    <ul id="ai-detected-objects-{{ $vehicle->id }}" style="list-style-type: none; padding: 0;">
+                        <li>-</li>
+                    </ul>
+                </div>
+            </td>
+            <td style="vertical-align: top; padding-left: 20px; padding-top: 10px;">
+                <div style="border: 1px solid #ccc; background-color: #fff; padding: 10px; border-radius: 5px;">
+                    <h4>Personality</h4>
+                    <ul style="list-style-type: none; padding: 0;">
+                        <li><strong>Energy:</strong> <span id="energy-{{ $vehicle->id }}">{{ $vehicle->energy ?? 'N/A' }}</span></li>
+                        <li><strong>Happiness:</strong> <span id="happiness-{{ $vehicle->id }}">{{ $vehicle->happiness ?? 'N/A' }}</span></li>
+                    </ul>
+                </div>
+            </td>
+        </tr>
     </table>
 </div>
