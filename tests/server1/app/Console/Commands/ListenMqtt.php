@@ -60,6 +60,21 @@ class ListenMqtt extends Command
             }
         }, 0);
 
+        // Subscribe to the topic where control commands are published
+        $mqtt->subscribe('vehicle/+/control', function ($topic, $message) {
+            $this->info("Received control command on topic [{$topic}]: {$message}");
+            // At this point, the command has been published.
+            // The actual vehicle is expected to subscribe to this topic directly.
+            // We are just logging it here for visibility within the Laravel app.
+            $data = json_decode($message, true);
+            $vehicleId = explode('/', $topic)[1]; // Extract vehicle ID from topic
+            if (isset($data['action'])) {
+                $this->info("Vehicle #{$vehicleId} - Action: {$data['action']}, Speed: {$data['speed'] ?? 'N/A'}");
+                // Further actions can be added here, e.g., logging to a database,
+                // updating UI in real-time if a WebSocket server is running.
+            }
+        }, 0);
+
         $mqtt->loop(true);
     }
 }
