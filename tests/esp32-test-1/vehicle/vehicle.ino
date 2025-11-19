@@ -1,144 +1,134 @@
+#include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <Stepper.h>
+#include "config.h"
 
-// WiFi credentials
-const char* ssid = "?";
-const char* password = "?";
+// Stepper objects
+Stepper leftMotor(STEPS_PER_REV, LEFT_IN1, LEFT_IN2, LEFT_IN3, LEFT_IN4);
+Stepper rightMotor(STEPS_PER_REV, RIGHT_IN1, RIGHT_IN2, RIGHT_IN3, RIGHT_IN4);
 
-// MQTT settings
-const char* mqtt_server = "192.168.0.13"; // e.g., "192.168.1.100"
-const int mqtt_port = 1883;
-const char* mqtt_client_id = "vehicle_1";
-const char* mqtt_control_topic = "vehicle/1/control";
-const char* mqtt_status_topic = "vehicle/1/status";
-
-// Stepper motor settings
-#define STEPS_PER_REV 200 // Adjust for your motor (e.g., NEMA 17)
-#define MOTOR1_IN1 13     // GPIO pins for motor 1 (left wheel)
-#define MOTOR1_IN2 12
-#define MOTOR1_IN3 14
-#define MOTOR1_IN4 27
-#define MOTOR2_IN1 26     // GPIO pins for motor 2 (right wheel)
-#define MOTOR2_IN2 25
-#define MOTOR2_IN3 33
-#define MOTOR2_IN4 32
-Stepper motor1(STEPS_PER_REV, MOTOR1_IN1, MOTOR1_IN2, MOTOR1_IN3, MOTOR1_IN4);
-Stepper motor2(STEPS_PER_REV, MOTOR2_IN1, MOTOR2_IN2, MOTOR2_IN3, MOTOR2_IN4);
-
-// Battery monitoring
-#define BATTERY_PIN 34    // ADC pin for battery voltage
-const float vref = 3.3;   // ESP32 reference voltage
-const float divider_ratio = 2.0; // Voltage divider (e.g., 10k/10k resistors)
-
-// WiFi and MQTT clients
+// MQTT
 WiFiClient espClient;
 PubSubClient client(espClient);
-unsigned long last_status = 0;
 
-#define LED_BUILTIN 2 // Most ESP32 boards have a blue LED on GPIO2
+// Current motor speeds (-1.0 to +1.0)
+float leftSpeed  = 0.0;
+float rightSpeed = 0.0;
 
-// Function to flash the built-in LED
-void flash_led(int count) {
-  pinMode(LED_BUILTIN, OUTPUT);
-  for (int i = 0; i < count; i++) {
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(100);
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(100);
+unsigned long lastStatus = 0;
+unsigned long blinkerTimer = 0;
+bool blinkerState = false;
+
+void setMainLights(bool on) {
+  digitalWrite(PIN_MAIN_LIGHTS, on ? HIGH : LOW);
+}
+
+void updateBlinkers() {
+  if (millis() - blinkerTimer >= 500) {
+    blinkerTimer = millis();
+    blinkerState = !blinkerState;
+    bool anyTurning = (leftSpeed < -0.3 && rightSpeed > 0.3) || (rightSpeed < -0.3 && leftSpeed > 0.3);
+    digitalWrite(PIN_LEFT_BLINKER,  (leftSpeed < -0.3 && rightSpeed > 0.3) ? blinkerState : LOW);
+    digitalWrite(PIN_RIGHT_BLINKER, (rightSpeed < -0.3 && leftSpeed > 0.3) ? blinkerState : LOW);
+    if (!anyTurning) {
+      digitalWrite(PIN_LEFT_BLINKER, LOW);
+      digitalWrite(PIN_RIGHT_BLINKER, LOW);
+    }
+  }
+}
+
+void setMotorSpeeds() {
+  int rpm = 15;  // Safe max for 28BYJ-48
+  int leftRPM  = (int)(abs(leftSpeed)  * rpm * (leftSpeed  >= 0 ? 1 : -1));
+  int rightRPM = (int)(abs(rightSpeed) * rpm * (rightSpeed >= 0 ? 1 : -1));
+
+  leftMotor.setSpeed(abs(leftRPM));
+  rightMotor.setSpeed(abs(rightRPM));
+
+  // Non-blocking small steps
+  if (leftRPM != 0)  leftMotor.step(leftRPM > 0 ? 4 : -4);
+  if (rightRPM != 0) rightMotor.step(rightRPM > 0 ? 4 : -4);
+
+  // Main lights on when any wheel is moving
+  setMainLights(abs(leftSpeed) > 0.05 || abs(rightSpeed) > 0.05);
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  String msg = "";
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+  Serial.println("MQTT: " + msg);
+
+  // Expected format: {"left":0.8,"right":-0.5} or {"left":0,"right":0}
+  int l = msg.indexOf("\"left\":");
+  int r = msg.indexOf("\"right\":");
+  if (l != -1 && r != -1) {
+    leftSpeed  = msg.substring(l + 7, msg.indexOf(",", l)).toFloat();
+    rightSpeed = msg.substring(r + 8, msg.indexOf("}", r)).toFloat();
+
+    leftSpeed  = constrain(leftSpeed,  -1.0, 1.0);
+    rightSpeed = constrain(rightSpeed, -1.0, 1.0);
+  }
+
+  // Extra simple commands (optional)
+  if (msg.indexOf("honk") != -1) {
+    digitalWrite(PIN_HORN, HIGH); delay(150); digitalWrite(PIN_HORN, LOW);
+  }
+  if (msg.indexOf("highbeam_on") != -1)  digitalWrite(PIN_HIGH_BEAMS, HIGH);
+  if (msg.indexOf("highbeam_off") != -1) digitalWrite(PIN_HIGH_BEAMS, LOW);
+  if (msg.indexOf("fog_on") != -1)       digitalWrite(PIN_FOG_LIGHTS, HIGH);
+  if (msg.indexOf("fog_off") != -1)      digitalWrite(PIN_FOG_LIGHTS, LOW);
+}
+
+void publishStatus() {
+  float v = (analogRead(PIN_BATTERY) / 4095.0) * VREF * DIVIDER_RATIO;
+  String json = "{\"left\":" + String(leftSpeed,3) +
+                ",\"right\":" + String(rightSpeed,3) +
+                ",\"batt\":" + String(v,2) + "}";
+  client.publish(MQTT_STATUS_TOPIC, json.c_str());
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("MQTT connecting...");
+    if (client.connect(MQTT_CLIENT_ID)) {
+      Serial.println("connected");
+      client.subscribe(MQTT_CONTROL_TOPIC);
+    } else {
+      Serial.print("failed, rc=");
+      Serial.println(client.state());
+      delay(3000);
+    }
   }
 }
 
 void setup() {
   Serial.begin(115200);
 
-  // Initialize motors
-  motor1.setSpeed(60); // RPM; adjust for your motor
-  motor2.setSpeed(60);
+  pinMode(PIN_MAIN_LIGHTS, OUTPUT);
+  pinMode(PIN_FOG_LIGHTS, OUTPUT);
+  pinMode(PIN_HIGH_BEAMS, OUTPUT);
+  pinMode(PIN_LEFT_BLINKER, OUTPUT);
+  pinMode(PIN_RIGHT_BLINKER, OUTPUT);
+  pinMode(PIN_HORN, OUTPUT);
 
-  // Connect to WiFi
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi...");
-  }
-  Serial.println("WiFi connected");
-  flash_led(1);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\nWiFi OK");
 
-  // Setup MQTT
-  client.setServer(mqtt_server, mqtt_port);
+  client.setServer(MQTT_SERVER, MQTT_PORT);
   client.setCallback(callback);
-  reconnect();
 }
 
 void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
+  if (!client.connected()) reconnect();
   client.loop();
 
-  // Publish status every 10 x1k ms
-  if (millis() - last_status > 0.5 * 1000) {
-    publish_status();
-    last_status = millis();
+  setMotorSpeeds();
+  updateBlinkers();
+
+  if (millis() - lastStatus > 1000) {
+    publishStatus();
+    lastStatus = millis();
   }
-}
-
-void reconnect() {
-  while (!client.connected()) {
-    Serial.println("Connecting to MQTT...");
-    if (client.connect(mqtt_client_id)) {
-      Serial.println("MQTT connected");
-      flash_led(2);
-      client.subscribe(mqtt_control_topic);
-    } else {
-      Serial.print("MQTT failed, rc=");
-      Serial.println(client.state());
-      delay(5000);
-    }
-  }
-}
-
-void callback(char* topic, byte* payload, unsigned int length) {
-  flash_led(3);
-  // Parse JSON payload
-  String message;
-  for (unsigned int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  Serial.println("Received: " + message);
-
-  // Example: {"action":"forward","speed":0.5} or {"action":"stop"}
-  if (message.indexOf("forward") > -1) {
-    float speed = message.substring(message.indexOf("speed\":") + 7, message.indexOf("}")).toFloat();
-    int steps_per_sec = speed * STEPS_PER_REV; // Scale speed (0.0 to 1.0)
-    motor1.setSpeed(steps_per_sec);
-    motor2.setSpeed(steps_per_sec);
-    motor1.step(STEPS_PER_REV); // Move one revolution
-    motor2.step(STEPS_PER_REV);
-  } else if (message.indexOf("stop") > -1) {
-    motor1.setSpeed(0);
-    motor2.setSpeed(0);
-  } else if (message.indexOf("turn_left") > -1) {
-    motor1.setSpeed(0); // Stop left wheel
-    motor2.setSpeed(60); // Right wheel moves
-    motor2.step(STEPS_PER_REV);
-  } else if (message.indexOf("turn_right") > -1) {
-    motor1.setSpeed(60); // Left wheel moves
-    motor2.setSpeed(0); // Stop right wheel
-    motor1.step(STEPS_PER_REV);
-  }
-}
-
-void publish_status() {
-  // Read battery voltage
-  int analog_value = analogRead(BATTERY_PIN);
-  float voltage = (analog_value / 4095.0) * vref * divider_ratio;
-
-  // Publish status
-  char status[100];
-  snprintf(status, sizeof(status), "{\"battery\":%.2f,\"status\":\"%s\"}", 
-           voltage, client.connected() ? "online" : "offline");
-  client.publish(mqtt_status_topic, status);
-  Serial.println("Status: " + String(status));
 }
